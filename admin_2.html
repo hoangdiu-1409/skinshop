@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trang quản trị</title>
+<style>
+  :root{--bg:#f4f6fa;--card:#fff;--text:#1f2937;--muted:#6b7280;--main:#2563eb;--line:#e5e7eb;--bad:#dc2626}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,Arial,sans-serif;background:var(--bg);color:var(--text)}
+  .hidden{display:none!important}
+  input,select,button{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px}
+  button{background:var(--main);color:#fff;border:0;cursor:pointer}
+  button.ghost{background:#fff;color:var(--text);border:1px solid var(--line)}
+  button.danger{background:var(--bad)}
+  /* Màn hình đăng nhập / đăng ký */
+  #auth{min-height:100vh;display:grid;place-items:center}
+  .box{background:var(--card);padding:28px;border-radius:12px;width:min(380px,92vw);box-shadow:0 4px 20px #0001}
+  .box input{width:100%;margin-bottom:10px}
+  .switch{display:flex;gap:8px;margin-bottom:16px}
+  .switch button{flex:1}
+  #authMsg{color:var(--bad);min-height:1.2em;margin:0 0 8px;font-size:14px}
+  /* Khung chính */
+  #app{display:grid;grid-template-columns:200px 1fr;min-height:100vh}
+  aside{background:#111827;color:#fff;padding:20px 12px}
+  aside h3{margin:0 0 4px;padding:0 8px}
+  aside small{display:block;padding:0 8px 16px;color:#9ca3af}
+  aside a{display:block;padding:10px;border-radius:8px;color:#cbd5e1;cursor:pointer;margin-bottom:4px}
+  aside a.active,aside a:hover{background:#1f2937;color:#fff}
+  main{padding:24px;overflow-x:auto}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}
+  .stat{background:var(--card);padding:16px;border-radius:12px}
+  .stat b{display:block;font-size:24px;margin-top:4px}
+  .stat span,.hint{color:var(--muted);font-size:14px}
+  .form{display:flex;gap:8px;flex-wrap:wrap;background:var(--card);padding:12px;border-radius:12px;margin-bottom:12px}
+  table{width:100%;border-collapse:collapse;background:var(--card);border-radius:12px;overflow:hidden}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);font-size:14px}
+  th{background:#f9fafb;color:var(--muted)}
+  td input[type=number]{width:90px}
+  .low{color:var(--bad);font-weight:600}
+  #toast{position:fixed;bottom:20px;right:20px;background:#111827;color:#fff;padding:10px 16px;border-radius:8px}
+  @media(max-width:700px){#app{grid-template-columns:1fr}aside{display:flex;gap:6px;overflow-x:auto}aside h3,aside small{display:none}}
+</style>
+</head>
+<body>
+
+<!-- 1. ĐĂNG NHẬP / TẠO TÀI KHOẢN -->
+<section id="auth">
+  <div class="box">
+    <div class="switch">
+      <button id="goLogin">Đăng nhập</button>
+      <button id="goReg" class="ghost">Tạo tài khoản</button>
+    </div>
+    <input id="u" placeholder="Tên đăng nhập" autocomplete="username">
+    <input id="p" type="password" placeholder="Mật khẩu (tối thiểu 6 ký tự)" autocomplete="current-password">
+    <input id="p2" class="hidden" type="password" placeholder="Nhập lại mật khẩu" autocomplete="new-password">
+    <p id="authMsg"></p>
+    <button id="authBtn" style="width:100%">Đăng nhập</button>
+  </div>
+</section>
+
+<!-- 2. GIAO DIỆN QUẢN TRỊ -->
+<div id="app" class="hidden">
+  <aside>
+    <h3>🛒 Admin</h3><small id="who"></small>
+    <a data-tab="dashboard" class="active">Tổng quan</a>
+    <a data-tab="orders">Đơn hàng</a>
+    <a data-tab="products">Sản phẩm & kho</a>
+    <a data-tab="customers">Khách hàng</a>
+    <a id="logout">Đăng xuất</a>
+  </aside>
+  <main>
+    <section id="tab-dashboard"></section>
+    <section id="tab-orders" class="hidden"></section>
+    <section id="tab-products" class="hidden"></section>
+    <section id="tab-customers" class="hidden"></section>
+  </main>
+</div>
+<div id="toast" class="hidden"></div>
+
+<script>
+/* ===== A. DỮ LIỆU: lưu trong localStorage (sau này thay bằng gọi API tới server) ===== */
+const KEY = 'admin_shop_db_v2';
+const STATUSES = ['Chờ xử lý', 'Đang giao', 'Hoàn tất', 'Đã hủy'];
+const empty = () => ({ accounts: [], products: [], customers: [], orders: [], seq: 1 });
+
+function load() {
+  try { return Object.assign(empty(), JSON.parse(localStorage.getItem(KEY))); }
+  catch (e) { return empty(); }
+}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) {} }
+let db = load();
+const nid = () => db.seq++;                       // sinh id tăng dần
+
+/* ===== B. TIỆN ÍCH ===== */
+const $ = (s) => document.querySelector(s);
+const money = (n) => Number(n).toLocaleString('vi-VN') + ' đ';
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const findP = (id) => db.products.find(p => p.id === id);
+const findC = (id) => db.customers.find(c => c.id === id);
+const orderTotal = (o) => findP(o.pid).price * o.qty;
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden');
+  clearTimeout(toast.id); toast.id = setTimeout(() => t.classList.add('hidden'), 2200);
+}
+
+/* ===== C. TÀI KHOẢN: băm mật khẩu + muối (salt), KHÔNG lưu mật khẩu thô ===== */
+async function hashPw(pw, salt) {
+  const data = new TextEncoder().encode(salt + pw);
+  if (window.crypto && crypto.subtle) {           // SHA-256 chuẩn của trình duyệt
+    const buf = await crypto.subtle.digest('SHA-256', data);
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  return btoa(salt + pw);                          // dự phòng yếu, chỉ để demo
+}
+const newSalt = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+async function register(user, pw, pw2) {
+  user = user.trim().toLowerCase();
+  if (user.length < 3) return 'Tên đăng nhập tối thiểu 3 ký tự';
+  if (pw.length < 6) return 'Mật khẩu tối thiểu 6 ký tự';
+  if (pw !== pw2) return 'Hai mật khẩu không khớp';
+  if (db.accounts.some(a => a.user === user)) return 'Tên đăng nhập đã tồn tại';
+  const salt = newSalt();
+  db.accounts.push({ user, salt, hash: await hashPw(pw, salt) });
+  save(); sessionStorage.setItem('admin_user', user);
+  return '';
+}
+async function login(user, pw) {
+  user = user.trim().toLowerCase();
+  const acc = db.accounts.find(a => a.user === user);
+  if (!acc || acc.hash !== await hashPw(pw, acc.salt)) return 'Sai tên đăng nhập hoặc mật khẩu';
+  sessionStorage.setItem('admin_user', user);
+  return '';
+}
+
+/* ===== D. NGHIỆP VỤ ===== */
+function addProduct(name, price, stock) {
+  if (!name.trim() || !(price >= 0) || !Number.isInteger(stock) || stock < 0) return 'Dữ liệu sản phẩm không hợp lệ';
+  db.products.push({ id: nid(), name: name.trim(), price, stock }); save(); return '';
+}
+function createOrder(cid, pid, qty) {              // đặt hàng => TRỪ kho
+  const p = findP(pid);
+  if (!findC(cid) || !p) return 'Chọn khách hàng và sản phẩm';
+  if (!Number.isInteger(qty) || qty < 1) return 'Số lượng không hợp lệ';
+  if (p.stock < qty) return 'Kho chỉ còn ' + p.stock;
+  p.stock -= qty;
+  db.orders.unshift({ id: nid(), cid, pid, qty, status: 'Chờ xử lý', date: new Date().toLocaleString('vi-VN') });
+  save(); return '';
+}
+function setStatus(id, status) {                   // hủy => HOÀN kho; khôi phục => trừ lại
+  const o = db.orders.find(x => x.id === id), p = findP(o.pid);
+  if (o.status === status) return '';
+  if (status === 'Đã hủy') p.stock += o.qty;
+  else if (o.status === 'Đã hủy') {
+    if (p.stock < o.qty) return 'Không đủ kho để khôi phục đơn';
+    p.stock -= o.qty;
+  }
+  o.status = status; save(); return '';
+}
+
+/* ===== E. HIỂN THỊ ===== */
+function renderDashboard() {
+  const revenue = db.orders.filter(o => o.status === 'Hoàn tất').reduce((s, o) => s + orderTotal(o), 0);
+  const low = db.products.filter(p => p.stock <= 5).length;
+  $('#tab-dashboard').innerHTML = `<h2>Tổng quan</h2><div class="stats">
+    <div class="stat"><span>Tổng đơn</span><b>${db.orders.length}</b></div>
+    <div class="stat"><span>Đơn chờ xử lý</span><b>${db.orders.filter(o => o.status === 'Chờ xử lý').length}</b></div>
+    <div class="stat"><span>Doanh thu (đơn hoàn tất)</span><b>${money(revenue)}</b></div>
+    <div class="stat"><span>Sản phẩm sắp hết (≤5)</span><b class="${low ? 'low' : ''}">${low}</b></div></div>
+    <p class="hint">Bắt đầu: thêm sản phẩm → thêm khách hàng → tạo đơn hàng.</p>`;
+}
+
+function renderProducts() {
+  const rows = db.products.map(p => `<tr>
+    <td>${esc(p.name)}</td><td>${money(p.price)}</td>
+    <td class="${p.stock <= 5 ? 'low' : ''}">${p.stock}</td>
+    <td><input type="number" min="0" value="${p.stock}" id="st${p.id}">
+      <button class="ghost" data-act="setstock" data-id="${p.id}">Lưu</button>
+      <button class="danger" data-act="delp" data-id="${p.id}">Xóa</button></td></tr>`).join('');
+  $('#tab-products').innerHTML = `<h2>Sản phẩm & kho</h2>
+    <div class="form">
+      <input id="pn" placeholder="Tên sản phẩm">
+      <input id="pp" type="number" min="0" placeholder="Giá (đ)">
+      <input id="ps" type="number" min="0" placeholder="Số lượng">
+      <button data-act="addp">+ Thêm sản phẩm</button></div>
+    <table><tr><th>Sản phẩm</th><th>Giá</th><th>Tồn kho</th><th>Cập nhật số lượng</th></tr>
+    ${rows || '<tr><td colspan="4">Chưa có sản phẩm.</td></tr>'}</table>`;
+}
+
+function renderCustomers() {
+  const rows = db.customers.map(c => `<tr><td>${esc(c.name)}</td><td>${esc(c.email)}</td>
+    <td>${db.orders.filter(o => o.cid === c.id).length}</td>
+    <td><button class="danger" data-act="delc" data-id="${c.id}">Xóa</button></td></tr>`).join('');
+  $('#tab-customers').innerHTML = `<h2>Khách hàng</h2>
+    <div class="form"><input id="cn" placeholder="Họ tên"><input id="ce" placeholder="Email">
+      <button data-act="addc">+ Thêm khách</button></div>
+    <table><tr><th>Họ tên</th><th>Email</th><th>Số đơn</th><th></th></tr>
+    ${rows || '<tr><td colspan="4">Chưa có khách hàng.</td></tr>'}</table>`;
+}
+
+function renderOrders() {
+  const opt = (arr, f) => arr.map(f).join('');
+  const rows = db.orders.map(o => `<tr>
+    <td>#${o.id}</td><td>${esc(findC(o.cid).name)}</td><td>${esc(findP(o.pid).name)} × ${o.qty}</td>
+    <td>${money(orderTotal(o))}</td><td>${esc(o.date)}</td>
+    <td><select data-status="${o.id}">${opt(STATUSES, s => `<option${s === o.status ? ' selected' : ''}>${s}</option>`)}</select></td></tr>`).join('');
+  $('#tab-orders').innerHTML = `<h2>Đơn hàng</h2>
+    <div class="form">
+      <select id="oc">${opt(db.customers, c => `<option value="${c.id}">${esc(c.name)}</option>`)}</select>
+      <select id="op">${opt(db.products, p => `<option value="${p.id}">${esc(p.name)} (còn ${p.stock})</option>`)}</select>
+      <input id="oq" type="number" min="1" value="1">
+      <button data-act="addo">+ Tạo đơn</button></div>
+    <table><tr><th>Mã</th><th>Khách</th><th>Sản phẩm</th><th>Tổng</th><th>Thời gian</th><th>Trạng thái</th></tr>
+    ${rows || '<tr><td colspan="6">Chưa có đơn hàng.</td></tr>'}</table>`;
+}
+function renderAll() { renderDashboard(); renderOrders(); renderProducts(); renderCustomers(); }
+
+/* ===== F. SỰ KIỆN: dùng "event delegation" – một chỗ lắng nghe cho cả trang ===== */
+const val = (id) => $('#' + id).value;
+const done = (err, okMsg) => { if (err) toast(err); else { toast(okMsg); renderAll(); } };
+
+$('main').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const id = +b.dataset.id;
+  switch (b.dataset.act) {
+    case 'addp': done(addProduct(val('pn'), parseFloat(val('pp')), parseInt(val('ps'), 10)), 'Đã thêm sản phẩm'); break;
+    case 'setstock': {
+      const v = parseInt(val('st' + id), 10);
+      if (!Number.isInteger(v) || v < 0) return toast('Số lượng không hợp lệ');
+      findP(id).stock = v; save(); done('', 'Đã cập nhật kho'); break;
+    }
+    case 'delp':
+      if (db.orders.some(o => o.pid === id)) return toast('Sản phẩm đã có đơn, không thể xóa');
+      if (confirm('Xóa sản phẩm này?')) { db.products = db.products.filter(p => p.id !== id); save(); done('', 'Đã xóa'); } break;
+    case 'addc':
+      if (!val('cn').trim()) return toast('Nhập họ tên');
+      db.customers.push({ id: nid(), name: val('cn').trim(), email: val('ce').trim() }); save(); done('', 'Đã thêm khách'); break;
+    case 'delc':
+      if (db.orders.some(o => o.cid === id)) return toast('Khách đã có đơn, không thể xóa');
+      if (confirm('Xóa khách này?')) { db.customers = db.customers.filter(c => c.id !== id); save(); done('', 'Đã xóa'); } break;
+    case 'addo': done(createOrder(+val('oc'), +val('op'), parseInt(val('oq'), 10)), 'Đã tạo đơn, kho đã được trừ'); break;
+  }
+});
+$('main').addEventListener('change', (e) => {      // đổi trạng thái đơn
+  if (e.target.dataset.status) done(setStatus(+e.target.dataset.status, e.target.value), 'Đã cập nhật trạng thái');
+  if (e.target.dataset.status) renderAll();
+});
+
+/* Điều hướng tab */
+document.querySelectorAll('[data-tab]').forEach(a => a.onclick = () => {
+  document.querySelectorAll('[data-tab]').forEach(x => x.classList.toggle('active', x === a));
+  ['dashboard', 'orders', 'products', 'customers'].forEach(t => $('#tab-' + t).classList.toggle('hidden', t !== a.dataset.tab));
+});
+
+/* ===== G. ĐĂNG NHẬP / ĐĂNG KÝ / ĐĂNG XUẤT ===== */
+let mode = db.accounts.length ? 'login' : 'register';   // chưa có tài khoản nào → mở sẵn form tạo
+function setMode(m) {
+  mode = m;
+  $('#p2').classList.toggle('hidden', m === 'login');
+  $('#authBtn').textContent = m === 'login' ? 'Đăng nhập' : 'Tạo tài khoản';
+  $('#goLogin').className = m === 'login' ? '' : 'ghost';
+  $('#goReg').className = m === 'register' ? '' : 'ghost';
+  $('#authMsg').textContent = '';
+}
+function showApp() {
+  const user = sessionStorage.getItem('admin_user');
+  $('#auth').classList.toggle('hidden', !!user);
+  $('#app').classList.toggle('hidden', !user);
+  if (user) { $('#who').textContent = user; renderAll(); }
+}
+$('#goLogin').onclick = () => setMode('login');
+$('#goReg').onclick = () => setMode('register');
+$('#authBtn').onclick = async () => {
+  const err = mode === 'login' ? await login(val('u'), val('p')) : await register(val('u'), val('p'), val('p2'));
+  $('#authMsg').textContent = err;
+  if (!err) { $('#p').value = $('#p2').value = ''; showApp(); }
+};
+$('#p').onkeydown = $('#p2').onkeydown = (e) => { if (e.key === 'Enter') $('#authBtn').click(); };
+$('#logout').onclick = () => { sessionStorage.removeItem('admin_user'); setMode('login'); showApp(); };
+
+setMode(mode); showApp();
+</script>
+</body>
+</html>
